@@ -337,7 +337,14 @@ def _redact_error(exc: Exception, config: Any) -> str:
 
 async def _probe_provider(config: Any) -> None:
     from deeptutor.services.config.loader import get_agent_params
+    from deeptutor.services.config.provider_runtime import ResolvedLLMConfig
     from deeptutor.services.llm.factory import complete_with_config
+    from deeptutor.services.model_selection.runtime import llm_config_from_resolved
+
+    # run_diagnostics resolves a ResolvedLLMConfig; the factory path expects
+    # the LLM service config shape (get_api_key/temperature/...).
+    if isinstance(config, ResolvedLLMConfig):
+        config = llm_config_from_resolved(config)
 
     # Share the Settings probe's configurable budget. A 64-token cap can be
     # exhausted by hidden reasoning before a healthy model emits even "OK".
