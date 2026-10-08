@@ -1076,6 +1076,28 @@ class MasteryQuizTool(BaseTool):
                     content=f"Visual practice is unavailable: {exc}. Inspect/clarify the source; no assessment was created.",
                     success=False,
                 )
+        if q_type == "choice" and kwargs.get("visual") is None:
+            from deeptutor.capabilities.mastery.verify import (
+                DISAGREE,
+                verify_answer_key,
+            )
+
+            verdict = await verify_answer_key(question, options, expected)
+            if verdict == DISAGREE:
+                # Do not reveal the verifier's option: this tool result is
+                # visible to the learner, and the tutor must re-derive the
+                # answer itself rather than echo a verdict it cannot check.
+                return ToolResult(
+                    content=(
+                        "Independent verification of this question's answer key "
+                        "disagreed with the registered expected_answer. Solve the "
+                        "question again from scratch — translate every constraint "
+                        "into an explicit condition and verify the arithmetic — "
+                        "then call mastery_quiz again with the corrected "
+                        "expected_answer (or pose a different question)."
+                    ),
+                    success=False,
+                )
         pending = PendingQuestion(
             question_id=uuid.uuid4().hex,
             knowledge_point_id=kp_id,

@@ -107,6 +107,15 @@ async def test_registration_shuffles_the_card_the_learner_sees(tmp_path, monkeyp
         "deeptutor.capabilities.mastery.tools.random.Random",
         lambda *args, **kwargs: real_random_class(7),
     )
+
+    async def _agree(_question, _options, _expected):
+        import deeptutor.capabilities.mastery.verify as verify_module
+
+        return verify_module.AGREE
+
+    monkeypatch.setattr(
+        "deeptutor.capabilities.mastery.verify.verify_answer_key", _agree
+    )
     LearningStore().save(_built_path())
 
     result = await MasteryQuizTool().execute(

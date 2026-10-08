@@ -1582,6 +1582,15 @@ async def test_mastery_card_promise_repair_uses_real_question_tool(
         "options": [{"label": "A", "body": "1, 2, 3"}, {"label": "B", "body": "1, 3, 2"}],
         "explanation": "The largest value 3 moves to the end in this pass.",
     }
+
+    async def _agree(_question, _options, _expected):
+        import deeptutor.capabilities.mastery.verify as verify_module
+
+        return verify_module.AGREE
+
+    monkeypatch.setattr(
+        "deeptutor.capabilities.mastery.verify.verify_answer_key", _agree
+    )
     old_id = None
     if repair == "existing":
         old = await MasteryQuizTool().execute(
