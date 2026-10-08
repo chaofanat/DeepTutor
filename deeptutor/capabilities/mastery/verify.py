@@ -87,8 +87,9 @@ def _messages(question: str, options: list[dict[str, str]]) -> list[dict[str, An
         {
             "role": "user",
             "content": (
-                f"Question:\n{question}\n\nOptions:\n" + "\n".join(lines) +
-                "\n\nSolve it (use exec for all arithmetic), then end with the FINAL line."
+                f"Question:\n{question}\n\nOptions:\n"
+                + "\n".join(lines)
+                + "\n\nSolve it (use exec for all arithmetic), then end with the FINAL line."
             ),
         },
     ]
@@ -156,9 +157,7 @@ async def _run_tool_loop(
         )
         for call in tool_calls:
             content = await _execute(exec_tool, call)
-            messages.append(
-                {"role": "tool", "tool_call_id": call.id, "content": content}
-            )
+            messages.append({"role": "tool", "tool_call_id": call.id, "content": content})
     return ""
 
 
@@ -176,8 +175,9 @@ async def _execute(exec_tool: ExecTool, call: Any) -> str:
     return content[:TOOL_RESULT_CHAR_CAP]
 
 
-async def _run_without_tools(client: Any, model: str | None, binding: str | None,
-                             messages: list[dict[str, Any]]) -> str:
+async def _run_without_tools(
+    client: Any, model: str | None, binding: str | None, messages: list[dict[str, Any]]
+) -> str:
     """Fallback for providers without native tool calling: one plain call."""
     response = await client.chat.completions.create(
         model=model,
@@ -258,7 +258,12 @@ async def _verify(
     exec_tool = ExecTool()
     if can_use_native_tool_calling(binding=binding, model=model):
         text = await _run_tool_loop(
-            client, model, binding, messages, exec_tool.get_definition().to_openai_schema(), exec_tool
+            client,
+            model,
+            binding,
+            messages,
+            exec_tool.get_definition().to_openai_schema(),
+            exec_tool,
         )
     else:
         text = await _run_without_tools(client, model, binding, messages)

@@ -113,9 +113,7 @@ async def test_registration_shuffles_the_card_the_learner_sees(tmp_path, monkeyp
 
         return verify_module.AGREE
 
-    monkeypatch.setattr(
-        "deeptutor.capabilities.mastery.verify.verify_answer_key", _agree
-    )
+    monkeypatch.setattr("deeptutor.capabilities.mastery.verify.verify_answer_key", _agree)
     LearningStore().save(_built_path())
 
     result = await MasteryQuizTool().execute(

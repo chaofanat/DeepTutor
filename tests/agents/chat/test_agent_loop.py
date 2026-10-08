@@ -1588,9 +1588,7 @@ async def test_mastery_card_promise_repair_uses_real_question_tool(
 
         return verify_module.AGREE
 
-    monkeypatch.setattr(
-        "deeptutor.capabilities.mastery.verify.verify_answer_key", _agree
-    )
+    monkeypatch.setattr("deeptutor.capabilities.mastery.verify.verify_answer_key", _agree)
     old_id = None
     if repair == "existing":
         old = await MasteryQuizTool().execute(
@@ -2440,12 +2438,14 @@ async def test_cold_start_stalled_provider_settles_with_bounded_retries(monkeypa
         assert failure.value.partial_response is (phase == "partial_stream")
         if phase != "connect":
             assert len(stopped) == len(attempts)
-        assert (
-            sum(event.metadata.get("error_code") == "provider_transport" for event in events) >= 1
-        )
     finally:
         await bus.close()
         await consumer
+    # Counted only after the drain: the partial-stream transport status is the
+    # very last emission before the raise, and nothing between it and this
+    # point suspends the loop, so the subscriber task has not run yet when
+    # the try block ends.
+    assert sum(event.metadata.get("error_code") == "provider_transport" for event in events) >= 1
 
 
 @pytest.mark.asyncio

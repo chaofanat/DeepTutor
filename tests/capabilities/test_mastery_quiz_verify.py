@@ -19,8 +19,8 @@ from pathlib import Path
 
 import pytest
 
-import deeptutor.capabilities.mastery.verify as verify_module
 from deeptutor.capabilities.mastery.tools import MasteryQuizTool
+import deeptutor.capabilities.mastery.verify as verify_module
 from deeptutor.capabilities.mastery.verify import AGREE, DISAGREE, UNVERIFIED
 from deeptutor.learning.models import (
     KnowledgePoint,
@@ -144,9 +144,7 @@ async def test_visual_questions_skip_verification(tmp_path, monkeypatch) -> None
     def _prepare_visual(*_args, **_kwargs):
         return {}, []
 
-    monkeypatch.setattr(
-        "deeptutor.learning.visual_practice.prepare_visual", _prepare_visual
-    )
+    monkeypatch.setattr("deeptutor.learning.visual_practice.prepare_visual", _prepare_visual)
 
     result = await MasteryQuizTool().execute(
         **_quiz_kwargs(
