@@ -69,6 +69,42 @@ describe("MasteryQuestionCard", () => {
     });
   });
 
+  it("submits the picked option's body, not its label", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn(() => true);
+    render(
+      <MasteryQuestionCard
+        question={question({
+          questionId: "q-choice",
+          options: [
+            { label: "A", body: "overwrite" },
+            { label: "B", body: "accumulate" },
+          ],
+        })}
+        grade={null}
+        answered={false}
+        submittedAnswer=""
+        onSubmit={onSubmit}
+      />,
+    );
+
+    // The label the card shows is position-issued after the option shuffle,
+    // so a letter means different things to the tutor and the grader. The
+    // submitted answer must be the body, which both sides agree on.
+    await user.click(screen.getByRole("button", { name: /accumulate/ }));
+    await user.click(screen.getByRole("button", { name: "Submit" }));
+
+    expect(onSubmit).toHaveBeenCalledWith({
+      text: "accumulate",
+      answers: [
+        {
+          questionId: "q-choice",
+          text: "accumulate",
+        },
+      ],
+    });
+  });
+
   it("keeps explicit free text working alongside choices", async () => {
     const user = userEvent.setup();
     const onSubmit = vi.fn(() => true);

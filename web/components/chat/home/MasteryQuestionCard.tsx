@@ -135,7 +135,14 @@ export const MasteryQuestionCard = memo(function MasteryQuestionCard({
 
   const hasChoices = question.options.length > 0;
   const usesFreeText = freeSelected || !hasChoices;
-  const answer = usesFreeText ? freeText.trim() : picked;
+  // The submitted answer is the option's body, not its label: the tutor
+  // authored the bodies, so content is the one representation whose meaning
+  // the shuffle cannot change (#1691 re-issues labels positionally, which
+  // silently desyncs any letter the model reads back from its own tool call).
+  const pickedBody = hasChoices
+    ? question.options.find((option) => option.label === picked)?.body ?? picked
+    : picked;
+  const answer = usesFreeText ? freeText.trim() : pickedBody;
   // Skipping settles the card exactly as answering does: the engine closed the
   // question, so there is nothing left on it to send.
   const settled = answered || skipped === true;
@@ -182,15 +189,20 @@ export const MasteryQuestionCard = memo(function MasteryQuestionCard({
         "border-dashed border-[var(--border)]"
       : "border-[var(--border)]";
 
-  const optionState = (option: { label: string }): OptionState => {
+  const optionState = (option: { label: string; body: string }): OptionState => {
+    // Graded records and transcripts carry the answer as the option body
+    // (see `answer` above); older records stored the label. Accept both so a
+    // pre-upgrade grade still highlights what the learner picked.
+    const isLearnerPick =
+      (option.body && option.body === learnerAnswer) ||
+      (option.label && option.label === learnerAnswer);
     if (grade) {
       if (ungraded) return "idle";
       if (option.label && option.label === grade.correctLabel) return "correct";
-      if (option.label && option.label === learnerAnswer && !grade.isCorrect)
-        return "wrong";
+      if (isLearnerPick && !grade.isCorrect) return "wrong";
       return "idle";
     }
-    if (settled) return option.label === learnerAnswer ? "picked" : "idle";
+    if (settled) return isLearnerPick ? "picked" : "idle";
     return !freeSelected && option.label === picked ? "picked" : "idle";
   };
 
