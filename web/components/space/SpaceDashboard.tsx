@@ -104,7 +104,7 @@ const GROUPS: DashboardGroup[] = [
         },
         unit: { zh: "段对话", en: "conversations" },
         tile: "bg-sky-500/10 text-sky-600 dark:text-sky-400",
-        load: async () => (await listSessions(200, 0, { force: true })).length,
+        load: async () => (await listSessions(200, 0, { force: true, allWorkspaces: true })).length,
       },
       {
         key: "notebooks",
