@@ -1297,6 +1297,36 @@ class MasteryGradeTool(BaseTool):
                 # Legacy question with no recoverable bodies: the raw reply is
                 # the only thing there is to compare.
                 answer_for_grading = answer
+        # Layer two for free-text answers: when the deterministic matcher
+        # rules a non-blank short/open answer wrong, a semantic-equivalence
+        # judge gets one chance to rescue a correctly-worded paraphrase
+        # before the verdict commits — a wrong grade feeds the error records
+        # and the scheduler, so a phrasing mismatch must not lock the
+        # objective into endless review. Judge failure keeps the verdict.
+        semantic_equivalent = False
+        if (
+            pending is not None
+            and (interaction is None or interaction.status != InteractionStatus.GRADED)
+            and pending.question_type in ("short", "open")
+            and not pending.visual_context
+            and str(answer_for_grading or "").strip()
+            and str(expected_answer or "").strip()
+        ):
+            from deeptutor.learning.grading import grade_answer
+
+            if not grade_answer(answer_for_grading, expected_answer, pending.question_type):
+                from deeptutor.capabilities.mastery.semantic_grade import (
+                    AGREE,
+                    judge_free_text_answer,
+                )
+
+                verdict = await judge_free_text_answer(
+                    pending.prompt,
+                    pending.question_type,
+                    expected_answer,
+                    answer_for_grading,
+                )
+                semantic_equivalent = verdict == AGREE
         from deeptutor.learning.service import MasteryInteractionError
 
         try:
@@ -1310,6 +1340,7 @@ class MasteryGradeTool(BaseTool):
                 scheduler=scheduler,
                 session_id=_resolve_session_id(kwargs),
                 turn_id=_resolve_turn_id(kwargs),
+                semantic_equivalent=semantic_equivalent,
             )
         except MasteryInteractionError as exc:
             # The common way to land here now is grading something the runtime
@@ -1437,6 +1468,11 @@ class MasteryGradeTool(BaseTool):
                 + " Never end the turn without saying anything."
             ),
         }
+        if semantic_equivalent and is_correct:
+            # The deterministic matcher rejected this wording and the semantic
+            # judge accepted it; without this flag the tutor may "correct" a
+            # learner who answered correctly in their own words.
+            payload["semantic_equivalent"] = True
         return _json_result(payload, meta_key="mastery_grade")
 
 

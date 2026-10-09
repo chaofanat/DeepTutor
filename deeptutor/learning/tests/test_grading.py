@@ -85,6 +85,57 @@ class TestEdgeCases:
         assert grade_answer("a", "a", "unknown") is False
 
 
+class TestShortChineseSurfaceForms:
+    """Same answer, different surface: full/half width, punctuation, lead-in,
+    equivalent number notation, and reordered wording must all pass, while
+    padded or wrong answers must not."""
+
+    def test_full_width_digits_and_letters(self):
+        assert grade_answer("ＡＢＣ", "abc", "short") is True
+        assert grade_answer("１２３", "123", "short") is True
+
+    def test_punctuation_and_whitespace_ignored(self):
+        assert grade_answer("北京、上海、广州。", "北京，上海，广州", "short") is True
+
+    def test_verbal_lead_in_stripped(self):
+        assert grade_answer("答案是：充分条件", "充分条件", "short") is True
+        assert grade_answer("我认为应该是选言命题", "选言命题", "short") is True
+
+    def test_bare_ambiguous_starter_kept(self):
+        # 选言命题 is real terminology; stripping a bare 选 would corrupt it.
+        assert grade_answer("选言命题", "选言命题", "short") is True
+        assert grade_answer("选言", "选言命题", "short") is False
+
+    def test_equivalent_number_notations(self):
+        assert grade_answer("1/2", "0.5", "short") is True
+        assert grade_answer("50%", "0.5", "short") is True
+        assert grade_answer("-3.14", "-3.140", "short") is True
+        assert grade_answer("1,000", "1000", "short") is True
+        assert grade_answer("0.5", "0.6", "short") is False
+        assert grade_answer("1/3", "0.33", "short") is False
+
+    def test_reordered_wording_passes_bigram(self):
+        assert grade_answer("上海广州北京", "北京上海广州", "short") is True
+
+    def test_padded_answer_does_not_pass(self):
+        assert grade_answer("北京上海广州深圳都是一线城市", "北京上海广州", "short") is False
+
+    def test_blank_after_normalization_is_wrong(self):
+        assert grade_answer("答案是：", "答案", "short") is False
+
+
+class TestOpenChineseNormalization:
+    def test_open_full_width_separators_and_spacing(self):
+        expected = "增加，减少，不变"
+        user = "答：不变、增加和 减少都有可能"
+        assert grade_answer(user, expected, "open") is True
+
+    def test_open_missing_point_fails(self):
+        expected = "增加，减少，不变"
+        user = "只说了增加"
+        assert grade_answer(user, expected, "open") is False
+
+
 class TestClassifyError:
     """Coarse wrong-answer tagging used by the post-answer pipeline.
 

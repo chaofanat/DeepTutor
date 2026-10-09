@@ -527,10 +527,11 @@ class LearningService:
         session_id: str = "",
         turn_id: str = "",
         visual_context: dict[str, Any] | None = None,
+        semantic_equivalent: bool = False,
     ) -> bool:
         """Mutate one aggregate with a grade without performing I/O."""
-        is_correct = bool(expected_answer) and grade_answer(
-            user_answer, expected_answer, question_type
+        is_correct = bool(expected_answer) and (
+            grade_answer(user_answer, expected_answer, question_type) or semantic_equivalent
         )
         # Capture the active retry before recording this answer graduates it.
         # Past retries on this or another question must not weaken later reviews.
@@ -855,6 +856,7 @@ class LearningService:
         scheduler: SpacedRepetitionScheduler | None = None,
         session_id: str = "",
         turn_id: str = "",
+        semantic_equivalent: bool = False,
     ) -> tuple[LearningProgress, MasteryInteraction, bool]:
         """Grade and resolve an interaction in one idempotent transaction.
 
@@ -973,6 +975,7 @@ class LearningService:
                     session_id=session_id,
                     turn_id=turn_id,
                     visual_context=pending.visual_context,
+                    semantic_equivalent=semantic_equivalent,
                 )
             )
             if (
@@ -988,6 +991,10 @@ class LearningService:
                 "is_correct": is_correct,
                 "knowledge_point_id": pending.knowledge_point_id,
             }
+            if semantic_equivalent:
+                # Audit trail: this grade came from the semantic-equivalence
+                # layer, not from the deterministic matcher.
+                interaction.result["semantic_equivalent"] = True
             if pending.visual_context:
                 interaction.result.update(
                     {

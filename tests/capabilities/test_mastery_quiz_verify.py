@@ -185,6 +185,18 @@ async def test_non_choice_questions_skip_verification(tmp_path, monkeypatch) -> 
     assert result.success is True, result.content
 
 
+@pytest.mark.asyncio
+async def test_the_verifier_is_inert_under_pytest() -> None:
+    # The kill-switch itself: unpatched, inside pytest, verification fails
+    # open without spending a real provider call — the suite (and CI) has
+    # always assumed this, including on machines with saved credentials.
+    verdict = await verify_module.verify_answer_key(
+        "2+2=?", [{"label": "A", "body": "3"}, {"label": "B", "body": "4"}], "B"
+    )
+
+    assert verdict == UNVERIFIED
+
+
 def test_final_line_parser_acceptances() -> None:
     labels = {"A", "B", "C", "D"}
     assert verify_module._parse_final("work\nFINAL: C", labels) == "C"
