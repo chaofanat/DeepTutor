@@ -58,6 +58,7 @@ TOOL_RESULT_CHAR_CAP = 4000
 
 _FINAL_RE = re.compile(r"FINAL\s*[:：]\s*\**\s*([A-Za-z]+)")
 _UNSURE_RE = re.compile(r"FINAL\s*[:：]\s*\**\s*UNSURE", re.IGNORECASE)
+_SHORT_FINAL_RE = re.compile(r"FINAL\s*[:：]\s*(.+)")
 
 _SYSTEM_PROMPT = """You are an independent answer-key verifier for a multiple-choice question.
 
@@ -75,6 +76,27 @@ FINAL: <letter of the single correct option>
 
 If the question is ambiguous, has zero or several correct options, or you
 cannot determine the answer, end with:
+
+FINAL: UNSURE
+
+Output nothing after that line."""
+
+_SHORT_SYSTEM_PROMPT = """You are an independent answer verifier for a short-answer question.
+
+Solve the question rigorously, on your own. You are NOT told the registered
+answer — judge only from the question text.
+
+You have the `exec` tool: run Python code for EVERY calculation and
+enumeration. Never do arithmetic or counting in your head. When the question
+involves counting candidates, write a short program that enumerates them and
+checks each against the stated constraints, then count with the program.
+
+When you are certain, end your reply with exactly one line:
+
+FINAL: <the answer in its minimal form — a single number, term, or short phrase>
+
+If the question is ambiguous, has several defensible answers, or you cannot
+determine it, end with:
 
 FINAL: UNSURE
 
@@ -244,30 +266,7 @@ async def _verify(
     valid_labels: set[str],
     expected_label: str,
 ) -> str:
-    from deeptutor.services.config import resolve_llm_runtime_config
-    from deeptutor.services.model_selection.runtime import llm_config_from_resolved
-
-    resolved = resolve_llm_runtime_config(service_name="task")
-    if not (getattr(resolved, "model", "") or "").strip():
-        # A task service with no model selected resolves to an empty model;
-        # the verifier is worthless without one, so fall back to the chat
-        # model rather than shipping the request to the provider unnamed.
-        resolved = resolve_llm_runtime_config(service_name="llm")
-    cfg = llm_config_from_resolved(resolved)
-    client_config = LLMClientConfig(
-        binding=getattr(cfg, "binding", None) or "openai",
-        model=getattr(cfg, "model", None),
-        api_key=getattr(cfg, "api_key", None),
-        base_url=getattr(cfg, "effective_url", None) or getattr(cfg, "base_url", None),
-        api_version=getattr(cfg, "api_version", None),
-        extra_headers=getattr(cfg, "extra_headers", None) or None,
-        reasoning_effort=getattr(cfg, "reasoning_effort", None),
-        wire_api=getattr(cfg, "wire_api", None) or "auto",
-        api_format=getattr(cfg, "api_format", None) or "auto",
-    )
-    binding = client_config.binding
-    model = client_config.model
-    client = build_openai_client(client_config)
+    client, model, binding = _build_client()
     messages = _messages(question, options)
 
     exec_tool = ExecTool()
@@ -294,4 +293,133 @@ async def _verify(
     return AGREE if verified == expected_label.strip().upper() else DISAGREE
 
 
-__all__ = ["AGREE", "DISAGREE", "UNVERIFIED", "verify_answer_key"]
+async def verify_short_answer(question: str, expected_answer: str) -> str:
+    """Re-solve ``question`` independently and compare with ``expected_answer``.
+
+    The same contract as :func:`verify_answer_key` for short questions: the
+    solver never sees the registered answer, every calculation runs through
+    the sandbox, and any infrastructure failure maps to ``"unverified"`` so
+    the caller can fail open. The comparison is exact/numeric first; a
+    phrasing-only difference falls through to the semantic-equivalence judge.
+    """
+    if not str(question or "").strip() or not str(expected_answer or "").strip():
+        return UNVERIFIED
+    if _network_calls_disabled():
+        return UNVERIFIED
+    try:
+        return await asyncio.wait_for(
+            _verify_short(question, expected_answer), timeout=TOTAL_TIMEOUT_S
+        )
+    except asyncio.TimeoutError:
+        logger.warning("short-answer verification timed out after %ss", TOTAL_TIMEOUT_S)
+        return UNVERIFIED
+    except Exception:
+        logger.warning("short-answer verification failed", exc_info=True)
+        return UNVERIFIED
+
+
+async def _verify_short(question: str, expected_answer: str) -> str:
+    solver_answer = await _solve_short(question)
+    if not solver_answer:
+        logger.warning("short-answer verification inconclusive: no usable FINAL line")
+        return UNVERIFIED
+    from deeptutor.learning.grading import grade_answer
+
+    if grade_answer(solver_answer, expected_answer, "short"):
+        return AGREE
+    # The solver's answer differs from the registered key on surface form.
+    # Before rejecting a registration, let the grader's own judge decide
+    # whether the two are the same answer said differently.
+    from deeptutor.capabilities.mastery.semantic_grade import (
+        AGREE as JUDGE_AGREE,
+    )
+    from deeptutor.capabilities.mastery.semantic_grade import (
+        DISAGREE as JUDGE_DISAGREE,
+    )
+    from deeptutor.capabilities.mastery.semantic_grade import (
+        judge_free_text_answer,
+    )
+
+    verdict = await judge_free_text_answer(question, "short", expected_answer, solver_answer)
+    if verdict == JUDGE_AGREE:
+        return AGREE
+    if verdict == JUDGE_DISAGREE:
+        return DISAGREE
+    return UNVERIFIED
+
+
+async def _solve_short(question: str) -> str:
+    client, model, binding = _build_client()
+    messages = [
+        {"role": "system", "content": _SHORT_SYSTEM_PROMPT},
+        {
+            "role": "user",
+            "content": (
+                f"Question:\n{question}\n\n"
+                "Solve it (use exec for all arithmetic), then end with the FINAL line."
+            ),
+        },
+    ]
+    exec_tool = ExecTool()
+    if can_use_native_tool_calling(binding=binding, model=model):
+        text = await _run_tool_loop(
+            client,
+            model,
+            binding,
+            messages,
+            exec_tool.get_definition().to_openai_schema(),
+            exec_tool,
+        )
+    else:
+        text = await _run_without_tools(client, model, binding, messages)
+    return _parse_short_final(text)
+
+
+def _parse_short_final(text: str) -> str:
+    """Extract the solver's FINAL answer; return "" when unusable."""
+    match = _SHORT_FINAL_RE.search(text or "")
+    if not match:
+        return ""
+    answer = match.group(1).strip().strip("*$").strip()
+    if not answer or answer.casefold() == "unsure":
+        return ""
+    return answer
+
+
+def _build_client() -> tuple[Any, str | None, str | None]:
+    """Resolve the task model (chat fallback) and build its OpenAI client."""
+    from deeptutor.services.config import resolve_llm_runtime_config
+    from deeptutor.services.model_selection.runtime import llm_config_from_resolved
+
+    resolved = resolve_llm_runtime_config(service_name="task")
+    if not (getattr(resolved, "model", "") or "").strip():
+        # A task service with no model selected resolves to an empty model;
+        # the verifier is worthless without one, so fall back to the chat
+        # model rather than shipping the request to the provider unnamed.
+        resolved = resolve_llm_runtime_config(service_name="llm")
+    cfg = llm_config_from_resolved(resolved)
+    client_config = LLMClientConfig(
+        binding=getattr(cfg, "binding", None) or "openai",
+        model=getattr(cfg, "model", None),
+        api_key=getattr(cfg, "api_key", None),
+        base_url=getattr(cfg, "effective_url", None) or getattr(cfg, "base_url", None),
+        api_version=getattr(cfg, "api_version", None),
+        extra_headers=getattr(cfg, "extra_headers", None) or None,
+        reasoning_effort=getattr(cfg, "reasoning_effort", None),
+        wire_api=getattr(cfg, "wire_api", None) or "auto",
+        api_format=getattr(cfg, "api_format", None) or "auto",
+    )
+    return (
+        build_openai_client(client_config),
+        client_config.model,
+        client_config.binding,
+    )
+
+
+__all__ = [
+    "AGREE",
+    "DISAGREE",
+    "UNVERIFIED",
+    "verify_answer_key",
+    "verify_short_answer",
+]

@@ -167,11 +167,20 @@ async def test_visual_questions_skip_verification(tmp_path, monkeypatch) -> None
 
 
 @pytest.mark.asyncio
-async def test_non_choice_questions_skip_verification(tmp_path, monkeypatch) -> None:
+async def test_short_questions_use_the_short_verifier_not_the_choice_one(
+    tmp_path, monkeypatch
+) -> None:
     _use_store_root(monkeypatch, tmp_path)
     LearningStore().save(_built_path())
-    calls: list[dict] = []
-    _patch_verdict(monkeypatch, AGREE, calls)
+    choice_calls: list[dict] = []
+    _patch_verdict(monkeypatch, AGREE, choice_calls)
+    short_calls: list[str] = []
+
+    async def _short_agree(question, expected_answer):
+        short_calls.append(expected_answer)
+        return AGREE
+
+    monkeypatch.setattr(verify_module, "verify_short_answer", _short_agree)
 
     result = await MasteryQuizTool().execute(
         **_quiz_kwargs(
@@ -181,8 +190,149 @@ async def test_non_choice_questions_skip_verification(tmp_path, monkeypatch) -> 
         )
     )
 
-    assert calls == []
+    assert choice_calls == []
+    assert short_calls == ["the derivative is 2x"]
     assert result.success is True, result.content
+
+
+@pytest.mark.asyncio
+async def test_short_answer_disagreement_rejects_registration(tmp_path, monkeypatch) -> None:
+    _use_store_root(monkeypatch, tmp_path)
+    LearningStore().save(_built_path())
+
+    async def _short_disagree(_question, _expected_answer):
+        return DISAGREE
+
+    monkeypatch.setattr(verify_module, "verify_short_answer", _short_disagree)
+
+    result = await MasteryQuizTool().execute(
+        **_quiz_kwargs(
+            question_type="short",
+            options=None,
+            expected_answer="6",
+        )
+    )
+
+    assert result.success is False
+    assert "disagreed" in result.content
+    assert LearningStore().load("path-1").pending_question is None
+
+
+@pytest.mark.asyncio
+async def test_short_answer_trouble_fails_open(tmp_path, monkeypatch) -> None:
+    _use_store_root(monkeypatch, tmp_path)
+    LearningStore().save(_built_path())
+
+    async def _short_unverified(_question, _expected_answer):
+        return UNVERIFIED
+
+    monkeypatch.setattr(verify_module, "verify_short_answer", _short_unverified)
+
+    result = await MasteryQuizTool().execute(
+        **_quiz_kwargs(
+            question_type="short",
+            options=None,
+            expected_answer="8",
+        )
+    )
+
+    assert result.success is True, result.content
+    assert LearningStore().load("path-1").pending_question is not None
+
+
+@pytest.mark.asyncio
+async def test_short_verification_compares_before_judging(monkeypatch) -> None:
+    # Exact and numeric equivalence settle the comparison without the judge;
+    # only a phrasing difference escalates to it.
+    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+    judge_calls: list[dict] = []
+
+    async def _solve(question):
+        return "1/2"
+
+    async def _judge(question, question_type, expected_answer, learner_answer):
+        judge_calls.append({"expected": expected_answer, "learner": learner_answer})
+        return "agree"
+
+    monkeypatch.setattr(verify_module, "_solve_short", _solve)
+    monkeypatch.setattr(
+        "deeptutor.capabilities.mastery.semantic_grade.judge_free_text_answer", _judge
+    )
+
+    verdict = await verify_module.verify_short_answer("What is half of one?", "0.5")
+
+    assert verdict == AGREE
+    assert judge_calls == []
+
+
+@pytest.mark.asyncio
+async def test_short_verification_escalates_phrasing_differences_to_the_judge(
+    monkeypatch,
+) -> None:
+    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+
+    async def _solve(question):
+        return "在叶绿体中"
+
+    async def _judge(question, question_type, expected_answer, learner_answer):
+        assert (expected_answer, learner_answer) == ("叶绿体", "在叶绿体中")
+        return "agree"
+
+    monkeypatch.setattr(verify_module, "_solve_short", _solve)
+    monkeypatch.setattr(
+        "deeptutor.capabilities.mastery.semantic_grade.judge_free_text_answer", _judge
+    )
+
+    verdict = await verify_module.verify_short_answer("光合作用发生在哪里？", "叶绿体")
+
+    assert verdict == AGREE
+
+
+@pytest.mark.asyncio
+async def test_short_verification_judge_disagreement_rejects(monkeypatch) -> None:
+    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+
+    async def _solve(question):
+        return "8"
+
+    async def _judge(_question, _question_type, _expected_answer, _learner_answer):
+        return "disagree"
+
+    monkeypatch.setattr(verify_module, "_solve_short", _solve)
+    monkeypatch.setattr(
+        "deeptutor.capabilities.mastery.semantic_grade.judge_free_text_answer", _judge
+    )
+
+    verdict = await verify_module.verify_short_answer("divisors of 1800 divisible by 5 not 3?", "6")
+
+    assert verdict == DISAGREE
+
+
+@pytest.mark.asyncio
+async def test_short_verification_unusable_solver_reply_fails_open(monkeypatch) -> None:
+    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+
+    async def _solve(question):
+        return ""
+
+    monkeypatch.setattr(verify_module, "_solve_short", _solve)
+
+    verdict = await verify_module.verify_short_answer("q", "8")
+
+    assert verdict == UNVERIFIED
+
+
+def test_short_final_parser_acceptances() -> None:
+    assert verify_module._parse_short_final("work\nFINAL: 8") == "8"
+    assert verify_module._parse_short_final("FINAL: **$8$**") == "8"
+    assert verify_module._parse_short_final("FINAL：叶绿体") == "叶绿体"
+    assert verify_module._parse_short_final("FINAL: 0.5") == "0.5"
+
+
+def test_short_final_parser_rejections() -> None:
+    assert verify_module._parse_short_final("FINAL: UNSURE") == ""
+    assert verify_module._parse_short_final("never concluded") == ""
+    assert verify_module._parse_short_final("") == ""
 
 
 @pytest.mark.asyncio

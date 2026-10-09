@@ -1076,15 +1076,19 @@ class MasteryQuizTool(BaseTool):
                     content=f"Visual practice is unavailable: {exc}. Inspect/clarify the source; no assessment was created.",
                     success=False,
                 )
-        if q_type == "choice" and kwargs.get("visual") is None:
+        if kwargs.get("visual") is None and q_type in ("choice", "short"):
             from deeptutor.capabilities.mastery.verify import (
                 DISAGREE,
                 verify_answer_key,
+                verify_short_answer,
             )
 
-            verdict = await verify_answer_key(question, options, expected)
+            if q_type == "choice":
+                verdict = await verify_answer_key(question, options, expected)
+            else:
+                verdict = await verify_short_answer(question, expected)
             if verdict == DISAGREE:
-                # Do not reveal the verifier's option: this tool result is
+                # Do not reveal the verifier's answer: this tool result is
                 # visible to the learner, and the tutor must re-derive the
                 # answer itself rather than echo a verdict it cannot check.
                 return ToolResult(
@@ -1462,8 +1466,11 @@ class MasteryGradeTool(BaseTool):
             # exactly the dead end this instruction exists to prevent.
             "instruction": (
                 "The card now shows the verdict, the correct option and your "
-                "explanation, so do not restate the answer key. Say what this "
-                "attempt tells you about their grasp of the objective, then keep "
+                "explanation, so do not restate the answer key. If you mention "
+                "any answer value or number in passing, copy it verbatim from "
+                "this tool result — never recompute it, never introduce a "
+                "value that is not in it. Say what this attempt tells you "
+                "about their grasp of the objective, then keep "
                 + next_move
                 + " Never end the turn without saying anything."
             ),
